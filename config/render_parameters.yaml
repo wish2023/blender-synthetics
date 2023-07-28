@@ -4,6 +4,8 @@ occlusion_aware: True
 visibility_thresh: 0.3
 component_visibility_thresh: 0.1
 
+create_sky: True
+
 plane_size: 150 # metres
 min_obj_count: 50 # min number of objects in scene
 max_obj_count: 100 # max number of objects in scene

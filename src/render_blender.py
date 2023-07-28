@@ -139,6 +139,17 @@ def generate_random_background():
         colorramp_node.color_ramp.elements[i].position = i * (1 / (num_elements-1))
         colorramp_node.color_ramp.elements[i].color = (random.random(), random.random(), random.random(),1)
 
+def add_sky():
+    """
+    Create sky background
+    """
+
+    sky_texture = bpy.context.scene.world.node_tree.nodes.new("ShaderNodeTexSky")
+    bg = bpy.context.scene.world.node_tree.nodes["Background"]
+    bpy.context.scene.world.node_tree.links.new(bg.inputs["Color"], sky_texture.outputs["Color"])
+
+    sky_texture.sky_type = 'HOSEK_WILKIE' # or 'PREETHAM'
+    sky_texture.sun_intensity = 0.0
 
 def add_sun(min_sun_energy, max_sun_energy, max_sun_tilt):
     """
@@ -300,6 +311,7 @@ def is_obstacle(obj):
         True if object is an obstacle
     """
 
+    # TODO: Throw error for: Argument of type 'NoneType' is not iterable
     return obj.name.split('.')[0] in obstacles_list
 
 def hair_emission(min_obj_count, max_obj_count, scale=1):
@@ -425,9 +437,9 @@ def render(render_path, render_name="synthetics.png"):
 
 if __name__ == "__main__":
 
-    with open("/home/vishesh/Desktop/synthetics/blender_synthetics/config/models.yaml") as file:
+    with open("./config/models.yaml") as file:
         models_info = yaml.load(file, Loader=yaml.FullLoader)
-    with open("/home/vishesh/Desktop/synthetics/blender_synthetics/config/render_parameters.yaml") as file:
+    with open("./config/render_parameters.yaml") as file:
         config_info = yaml.load(file, Loader=yaml.FullLoader)
 
     for key, value in models_info.items():
@@ -451,6 +463,7 @@ if __name__ == "__main__":
     plane_size = config_info["plane_size"]
     min_obj_count = config_info["min_obj_count"]
     max_obj_count = config_info["max_obj_count"]
+    create_sky = config_info["create_sky"]
 
     objects_dict = {} # objects_dict[class_name] = objects_names_list
     class_ids = {} # class_ids[class_name] = i
@@ -467,9 +480,11 @@ if __name__ == "__main__":
         print("---------------------------------------")
         print("Objects imported")
         print("---------------------------------------")
-
+        
         create_plane(plane_size, scenes_list=scenes_list)
+        if create_sky: add_sky()
         add_sun(min_sun_energy, max_sun_energy, max_sun_tilt)
+
         add_camera(min_camera_height, max_camera_height, max_camera_tilt)
         hair_emission(min_obj_count, max_obj_count)
         render(render_path, render_name)
