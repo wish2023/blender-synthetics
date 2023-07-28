@@ -311,8 +311,11 @@ def is_obstacle(obj):
         True if object is an obstacle
     """
 
-    # TODO: Throw error for: Argument of type 'NoneType' is not iterable
-    return obj.name.split('.')[0] in obstacles_list
+    try:
+        return obj.name.split('.')[0] in obstacles_list
+    except TypeError as e:
+        print("No objects and obstacles found. Unable to generate scene.")
+        raise TypeError
 
 def hair_emission(min_obj_count, max_obj_count, scale=1):
     """
