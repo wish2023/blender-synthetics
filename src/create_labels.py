@@ -10,10 +10,10 @@ import random
 import cv2
 
 
-with open("/home/vishesh/Desktop/synthetics/blender_synthetics/config/render_parameters.yaml") as file:
+with open("./config/render_parameters.yaml") as file:
     config_info = yaml.load(file, Loader=yaml.FullLoader)
 
-with open("/home/vishesh/Desktop/synthetics/blender_synthetics/config/models.yaml") as file:
+with open("./config/models.yaml") as file:
     models_info = yaml.load(file, Loader=yaml.FullLoader)
 
 for key, value in models_info.items():
