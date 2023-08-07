@@ -12,6 +12,7 @@ max_obj_count: 100 # max number of objects in scene
 
 min_camera_height: 200 # metres
 max_camera_height: 250 # metres
+min_camera_tilt: 0 # degrees
 max_camera_tilt: 30 # degrees
 
 min_sun_energy: 1 # W/m^2
