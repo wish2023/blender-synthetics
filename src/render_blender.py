@@ -11,6 +11,7 @@ import random
 import os
 import yaml
 from glob import glob
+import time
 
 
 def create_plane(plane_size=500, scenes_list=None):
@@ -490,6 +491,7 @@ if __name__ == "__main__":
     print_inputs()
     blender_setup()
 
+    start_time = time.time()
     for i in range(num_img):
         delete_objects()
         import_objects()
@@ -512,4 +514,11 @@ if __name__ == "__main__":
         print("---------------------------------------")
         print(f"Image {i+1} of {num_img} complete")
         print("---------------------------------------")
+
+    end_time = time.time()
+    total_time = end_time - start_time
+    hours, remainder = divmod(total_time, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    print(f"Time taken for {num_img} images: {int(hours)}h{int(minutes)}m{seconds:.2f}s")
+    print(f"Avg time taken for each image: {total_time / num_img:.2f}s")
     
