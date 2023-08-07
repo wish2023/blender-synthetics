@@ -47,10 +47,10 @@ def generate_texture(texture_path):
     Create blender nodes for imported texture
     """
 
-    img_tex = glob(os.path.join(texture_path, "*_diff_*"))[0]
-    img_rough = glob(os.path.join(texture_path, "*_rough_*"))[0]
-    img_norm = glob(os.path.join(texture_path, "*_nor_gl_*"))[0]
-    img_dis = glob(os.path.join(texture_path, "*_disp_*"))[0]
+    img_tex = glob(os.path.join(texture_path, "**", "*_diff_*"), recursive=True)[0]
+    img_rough = glob(os.path.join(texture_path, "**", "*_rough_*"), recursive=True)[0]
+    img_norm = glob(os.path.join(texture_path, "**", "*_nor_gl_*"), recursive=True)[0]
+    img_dis = glob(os.path.join(texture_path, "**", "*_disp_*"), recursive=True)[0]
 
     material_basic = bpy.data.materials.new(name="Basic")
     material_basic.use_nodes = True
