@@ -26,17 +26,23 @@ def create_plane(plane_size=500, scenes_list=None):
         Name of scene (str)
     """
 
-    scene = random.choice(scenes_list) if scenes_list else None
-
     subdivide_count = 100
     ops.mesh.primitive_plane_add(size=plane_size, enter_editmode=False, align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
     ops.object.editmode_toggle()
     ops.mesh.subdivide(number_cuts=subdivide_count)
     ops.object.editmode_toggle()
 
-    if scene:
-        generate_texture(scene)
-        scene_name = (scene.split("/")[-1]).split(".")[0].replace("_", "-")
+    attempt_count = 10
+    for _ in range(attempt_count):
+        scene = random.choice(scenes_list) if scenes_list else None
+        if scene and generate_texture(scene):
+            scene_name = scene.split("/")[-1].split(".")[0].replace("_", "-")
+            break
+        print(f"WARNING: {scene} invalid. Unable to generate texture.")
+    else:
+        print(f"Unable to find a suitable scene with all 4 textures within {attempt_count} attempts")
+
+    if scene_name:
         return scene_name
     else:
         generate_random_background()
@@ -46,12 +52,19 @@ def create_plane(plane_size=500, scenes_list=None):
 def generate_texture(texture_path):
     """
     Create blender nodes for imported texture
+    
+    Returns:
+        True if texture has been succesfully generated, False otherwise
     """
 
-    img_tex = glob(os.path.join(texture_path, "**", "*_diff_*"), recursive=True)[0]
-    img_rough = glob(os.path.join(texture_path, "**", "*_rough_*"), recursive=True)[0]
-    img_norm = glob(os.path.join(texture_path, "**", "*_nor_gl_*"), recursive=True)[0]
-    img_dis = glob(os.path.join(texture_path, "**", "*_disp_*"), recursive=True)[0]
+    try:
+        img_tex = glob(os.path.join(texture_path, "**", "*_diff_*"), recursive=True)[0]
+        img_rough = glob(os.path.join(texture_path, "**", "*_rough_*"), recursive=True)[0]
+        img_norm = glob(os.path.join(texture_path, "**", "*_nor_gl_*"), recursive=True)[0]
+        img_dis = glob(os.path.join(texture_path, "**", "*_disp_*"), recursive=True)[0]
+    except IndexError:
+        print(f"")
+        return False
 
     material_basic = bpy.data.materials.new(name="Basic")
     material_basic.use_nodes = True
@@ -103,6 +116,8 @@ def generate_texture(texture_path):
 
     link(norm_map.outputs["Normal"], principled_node.inputs["Normal"])
     link(node_disp.outputs["Displacement"], node_out.inputs["Displacement"])
+
+    return True
 
 
 def generate_random_background():
