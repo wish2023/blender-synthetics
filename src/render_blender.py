@@ -20,6 +20,9 @@ def create_plane(plane_size=500, scenes_list=None):
     Args:
         plane_size: Length of plane side
         scenes_list: Directories containing custom textures
+
+    Returns:
+        Name of scene (str)
     """
 
     scene = random.choice(scenes_list) if scenes_list else None
@@ -32,8 +35,11 @@ def create_plane(plane_size=500, scenes_list=None):
 
     if scene:
         generate_texture(scene)
+        scene_name = (scene.split("/")[-1]).split(".")[0].replace("_", "-")
+        return scene_name
     else:
         generate_random_background()
+        return "colormap"
 
    
 def generate_texture(texture_path):
@@ -175,6 +181,9 @@ def add_camera(camera_height_range, camera_tilt_range):
     Args:
         camera_height_range: Tuple consisting of the minimum and maximum height of camera
         camera_tilt_range: Tuple consisting of minimum and maximum viewing angle
+    
+    Returns:
+        Details of generated camera (str)
     """
     
     min_camera_tilt, max_camera_tilt = camera_tilt_range
@@ -192,8 +201,11 @@ def add_camera(camera_height_range, camera_tilt_range):
     ops.object.parent_set(type='OBJECT', keep_transform=False)
     ops.object.select_all(action='DESELECT')
 
-    context.scene.objects["Empty"].rotation_euler[0] = random.uniform(math.radians(min_camera_tilt), math.radians(max_camera_tilt))
+    camera_tilt = random.randint(min_camera_tilt, max_camera_tilt)
+    context.scene.objects["Empty"].rotation_euler[0] = math.radians(camera_tilt)
     context.scene.objects["Empty"].rotation_euler[2] = random.uniform(0, 2*math.pi)
+    
+    return f"{z}m_{camera_tilt}deg"
     
 
 def print_inputs():
@@ -479,7 +491,6 @@ if __name__ == "__main__":
     blender_setup()
 
     for i in range(num_img):
-        render_name = f"synthetics{i}.png"
         delete_objects()
         import_objects()
 
@@ -487,12 +498,15 @@ if __name__ == "__main__":
         print("Objects imported")
         print("---------------------------------------")
         
-        create_plane(plane_size, scenes_list=scenes_list)
+        scene_name = create_plane(plane_size, scenes_list=scenes_list)
         if create_sky: add_sky()
         add_sun(min_sun_energy, max_sun_energy, max_sun_tilt)
 
-        add_camera((min_camera_height, max_camera_height), (min_camera_tilt, max_camera_tilt))
+        camera_details = add_camera((min_camera_height, max_camera_height), (min_camera_tilt, max_camera_tilt))
         hair_emission(min_obj_count, max_obj_count)
+
+        # idx_scene-name_cam-height_cam-tilt
+        render_name = f"{i}_{scene_name}_{camera_details}.png"
         render(render_path, render_name)
 
         print("---------------------------------------")
