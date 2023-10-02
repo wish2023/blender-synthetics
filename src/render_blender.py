@@ -8,10 +8,11 @@ import math
 import numpy as np
 import random
 
-import os
 import yaml
 from glob import glob
 import time
+
+from pathlib import Path
 
 
 def create_plane(plane_size=500, scenes_list=None):
@@ -33,14 +34,18 @@ def create_plane(plane_size=500, scenes_list=None):
     ops.object.editmode_toggle()
 
     attempt_count = 10
-    for _ in range(attempt_count):
-        scene = random.choice(scenes_list) if scenes_list else None
-        if scene and generate_texture(scene):
-            scene_name = scene.split("/")[-1].split(".")[0].replace("_", "-")
-            break
-        print(f"WARNING: {scene} invalid. Unable to generate texture.")
+    if scenes_list:
+        for _ in range(attempt_count):
+            scene = random.choice(scenes_list) if scenes_list else None
+            if scene and generate_texture(Path(scene)):
+                scene_name = str(Path(scene).stem).replace("_", "-")
+                break
+            print(f"WARNING: {scene} invalid. Unable to generate texture.")
+        else:
+            print(f"Unable to find a suitable scene with all 4 textures within {attempt_count} attempts")
+            scene_name = None
     else:
-        print(f"Unable to find a suitable scene with all 4 textures within {attempt_count} attempts")
+        scene_name = None
 
     if scene_name:
         return scene_name
@@ -57,13 +62,20 @@ def generate_texture(texture_path):
         True if texture has been succesfully generated, False otherwise
     """
 
-    try:
-        img_tex = glob(os.path.join(texture_path, "**", "*_diff_*"), recursive=True)[0]
-        img_rough = glob(os.path.join(texture_path, "**", "*_rough_*"), recursive=True)[0]
-        img_norm = glob(os.path.join(texture_path, "**", "*_nor_gl_*"), recursive=True)[0]
-        img_dis = glob(os.path.join(texture_path, "**", "*_disp_*"), recursive=True)[0]
-    except IndexError:
-        print(f"")
+    texture_files = list(texture_path.glob("**/*"))
+    img_tex = next((file for file in texture_files if "_diff_" in file.name), None)
+    img_rough = next((file for file in texture_files if "_rough_" in file.name), None)
+    img_norm = next((file for file in texture_files if "_nor_gl_" in file.name), None)
+    img_dis = next((file for file in texture_files if "_disp_" in file.name), None)
+
+    # Check if all four texture files were found
+    if all([img_tex, img_rough, img_norm, img_dis]):
+        img_tex = str(img_tex)  # Convert Path object to string if needed
+        img_rough = str(img_rough)
+        img_norm = str(img_norm)
+        img_dis = str(img_dis)
+    else:
+        print(f"One or more texture files not found for texture path {str(texture_path)}.")
         return False
 
     material_basic = bpy.data.materials.new(name="Basic")
@@ -236,20 +248,20 @@ def import_from_path(class_path, class_name=None):
         class_name: Object class. Defaults to None if object type is irrelevant.
     """
 
-    for filename in os.listdir(class_path):
-        filepath = os.path.join(class_path, filename)
-        obj_name = os.path.splitext(filepath)[0].split("/")[-1]
-        ext = os.path.splitext(filepath)[1]
+    for filename in Path(class_path).iterdir():
+        filepath = class_path / filename
+        obj_name = filepath.stem
+        ext = filepath.suffix
 
         if ext == ".fbx":
-            ops.import_scene.fbx(filepath=filepath)
+            ops.import_scene.fbx(filepath=str(filepath))
         elif ext == ".obj":
-            ops.import_scene.obj(filepath=filepath)
+            ops.import_scene.obj(filepath=str(filepath))
         elif ext == ".blend":
-            blender_path = os.path.join("Object", obj_name)
+            blender_path = "Object" / obj_name
             ops.wm.append(
-                filepath=os.path.join(filepath, blender_path),
-                directory=os.path.join(filepath, "Object"),
+                filepath=str(filepath / blender_path),
+                directory=str(filepath / "Object"),
                 filename=obj_name)
         else:
             continue
@@ -275,8 +287,8 @@ def import_objects():
 
     if obstacles_path: import_from_path(obstacles_path)
     for i, class_path in enumerate(classes_list):
-        class_name = os.path.basename(os.path.normpath(class_path))
-        objects_dict[class_name] = [os.path.splitext(os.path.normpath(obj))[0] for obj in os.listdir(class_path)]
+        class_name = str(Path(class_path).resolve().name)
+        objects_dict[class_name] = [obj.stem for obj in Path(class_path).iterdir() if obj.is_file()]
         class_ids[class_name] = i
         import_from_path(class_path, class_name)
 
@@ -380,7 +392,7 @@ def hair_emission(min_obj_count, max_obj_count, scale=1):
     psys.settings.hair_length = particle_scale
     psys.seed = seed
 
-    # #RENDER
+    # RENDER
     psys.settings.render_type = "COLLECTION"
     plane.show_instancer_for_render = True
     psys.settings.instance_collection = bpy.data.collections["Models"]
@@ -390,7 +402,7 @@ def hair_emission(min_obj_count, max_obj_count, scale=1):
     psys.settings.use_rotation_instance = True
     psys.settings.use_global_instance = True
     
-    # # ROTATION
+    # ROTATION
     psys.settings.use_rotations = True
     psys.settings.rotation_mode = "NOR" # "GLOB_Z"
     psys.settings.phase_factor_random = 2.0 # change to random num (0 to 2.0)
@@ -438,21 +450,18 @@ def render(render_path, render_name="synthetics.png"):
         render_path: Directory to save render to
         render_name: Filename of render to be saved
     """
-    img_path = os.path.join(render_path, "img")
-    occ_aware_seg_path = os.path.join(render_path, "seg_maps")
-    occ_ignore_seg_path = os.path.join(render_path, "other_seg_maps")
-    zoomed_out_seg_path = os.path.join(render_path, "zoomed_out_seg_maps")
-    
-    if not os.path.isdir(render_path):
-        os.mkdir(render_path)
-    if not os.path.isdir(img_path):
-        os.mkdir(img_path)
-    if not os.path.isdir(occ_aware_seg_path):
-        os.mkdir(occ_aware_seg_path)
-    if not os.path.isdir(occ_ignore_seg_path):
-        os.mkdir(occ_ignore_seg_path)
-    if not os.path.isdir(zoomed_out_seg_path):
-        os.mkdir(zoomed_out_seg_path)
+    # Define subdirectories
+    img_path = render_path / "img"
+    occ_aware_seg_path = render_path / "seg_maps"
+    occ_ignore_seg_path = render_path / "other_seg_maps"
+    zoomed_out_seg_path = render_path / "zoomed_out_seg_maps"
+
+    # Create directories if they don't exist
+    render_path.mkdir(parents=True, exist_ok=True)
+    img_path.mkdir(parents=True, exist_ok=True)
+    occ_aware_seg_path.mkdir(parents=True, exist_ok=True)
+    occ_ignore_seg_path.mkdir(parents=True, exist_ok=True)
+    zoomed_out_seg_path.mkdir(parents=True, exist_ok=True)
 
     result = bpycv.render_data()
     for obj in bpy.data.collections['Obstacles'].all_objects:
@@ -462,10 +471,12 @@ def render(render_path, render_name="synthetics.png"):
     zoomed_out_result = bpycv.render_data(render_image=False)
     bpy.data.objects["Empty"].scale = (1, 1, 1)
 
-    cv2.imwrite(os.path.join(img_path, render_name), result["image"][..., ::-1])
-    cv2.imwrite(os.path.join(occ_aware_seg_path, render_name), np.uint16(result["inst"]))
-    cv2.imwrite(os.path.join(occ_ignore_seg_path, render_name), np.uint16(hidden_obstacles_result["inst"]))
-    cv2.imwrite(os.path.join(zoomed_out_seg_path, render_name), np.uint16(zoomed_out_result["inst"]))
+    # Write the images using cv2
+    print(f"Writing image to {str(img_path / render_name)}")
+    cv2.imwrite(str(img_path / render_name), result["image"][..., ::-1])
+    cv2.imwrite(str(occ_aware_seg_path / render_name), np.uint16(result["inst"]))
+    cv2.imwrite(str(occ_ignore_seg_path / render_name), np.uint16(hidden_obstacles_result["inst"]))
+    cv2.imwrite(str(zoomed_out_seg_path / render_name), np.uint16(zoomed_out_result["inst"]))
 
 
 if __name__ == "__main__":
@@ -482,9 +493,10 @@ if __name__ == "__main__":
         print(f"{key}: {value}")
 
     classes_list = models_info["classes"]
-    scenes_list = [os.path.join(models_info["scenes"], s) for s in os.listdir(models_info["scenes"])] if "scenes" in models_info else None
-    obstacles_path = models_info["obstacles_path"] if "obstacles_path" in models_info else None
-    obstacles_list =  [os.path.splitext(os.path.normpath(obj))[0] for obj in os.listdir(obstacles_path)] if obstacles_path else None
+
+    scenes_list = [str(scene_path) for scene_path in Path(models_info["scenes"]).iterdir() if scene_path.is_dir()] if "scenes" in models_info else None
+    obstacles_path = models_info["obstacles_path"] if "obstacles_path" in models_info else ""
+    obstacles_list = [obj.stem for obj in Path(obstacles_path).glob("*") if obj.is_file()]
     render_path = models_info["render_to"]
     min_camera_height = config_info["min_camera_height"]
     max_camera_height = config_info["max_camera_height"]
@@ -524,7 +536,7 @@ if __name__ == "__main__":
 
         # idx_scene-name_cam-height_cam-tilt
         render_name = f"{i}_{scene_name}_{camera_details}.png"
-        render(render_path, render_name)
+        render(Path(render_path), render_name)
 
         print("---------------------------------------")
         print(f"Image {i+1} of {num_img} complete")
