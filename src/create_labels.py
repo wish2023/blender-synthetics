@@ -210,7 +210,7 @@ for img_id, img_path_obj in enumerate(img_path.glob('*'), start=1):
     detections = []
     ann_id = 1
     for inst in instances:
-        cat_id = int(inst // 1000)
+        cat_id = int(inst // 1000) + 1
 
         if not is_inst_visible(inst, occ_aware_seg_map, occ_ignore_seg_map, visibility_thresh):
             continue
