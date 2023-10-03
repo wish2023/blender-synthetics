@@ -1,6 +1,6 @@
 from itertools import groupby
 import json
-import os
+from pathlib import Path
 import yaml
 
 import numpy as np
@@ -28,27 +28,23 @@ visibility_thresh = config_info["visibility_thresh"]
 component_visibility_thresh = config_info["component_visibility_thresh"]
 min_pixels = config_info["min_pixels"]
 results_dir = models_info["render_to"]
-classes = [os.path.basename(os.path.normpath(class_path)) for class_path in models_info["classes"]]
+classes = [Path(class_path).stem for class_path in models_info["classes"]]
 num_classes = len(models_info["classes"])
 
-img_path = os.path.join(results_dir, "img")
-occ_aware_seg_path = os.path.join(results_dir, "seg_maps")
-occ_ignore_seg_path = os.path.join(results_dir, "other_seg_maps")
-zoomed_out_seg_path = os.path.join(results_dir, "zoomed_out_seg_maps")
-yolo_annotated_path = os.path.join(results_dir, "yolo_annotated")
-obb_annotated_path = os.path.join(results_dir, "obb_annotated")
-yolo_labels_path = os.path.join(results_dir, "yolo_labels")
-obb_labels_path = os.path.join(results_dir, "obb_labels")
+base_path = Path(results_dir)
+img_path = base_path / "img"
+occ_aware_seg_path = base_path / "seg_maps"
+occ_ignore_seg_path = base_path / "other_seg_maps"
+zoomed_out_seg_path = base_path / "zoomed_out_seg_maps"
+yolo_annotated_path = base_path / "yolo_annotated"
+obb_annotated_path = base_path / "obb_annotated"
+yolo_labels_path = base_path / "yolo_labels"
+obb_labels_path = base_path / "obb_labels"
 
-
-if not os.path.isdir(yolo_annotated_path):
-    os.mkdir(yolo_annotated_path)
-if not os.path.isdir(obb_annotated_path):
-    os.mkdir(obb_annotated_path)
-if not os.path.isdir(yolo_labels_path):
-    os.mkdir(yolo_labels_path)
-if not os.path.isdir(obb_labels_path):
-    os.mkdir(obb_labels_path)
+yolo_annotated_path.mkdir(parents=True, exist_ok=True)
+obb_annotated_path.mkdir(parents=True, exist_ok=True)
+yolo_labels_path.mkdir(parents=True, exist_ok=True)
+obb_labels_path.mkdir(parents=True, exist_ok=True)
 
 coco_ann = {"images": [], "categories": [], "annotations": []}
 
@@ -173,24 +169,26 @@ def is_inst_on_edge(x_bb, y_bb, w, h, img):
 
 for i in range(num_classes):
     cat_info = {
-                "id":i,
-                "name":classes[i],
+                "id": (i + 1),
+                "name": classes[i],
                 }
     coco_ann["categories"].append(cat_info)
 
+for img_id, img_path_obj in enumerate(img_path.glob('*'), start=1):
+    img_filename = img_path_obj.name
 
-for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
+    overlapping = set()  # instances which overlap
 
-    overlapping = set() # instances which overlap
+    bb_ann = {
+        "cat_id": [], "xc": [], "yc": [], "w": [], "h": [],
+        "obb1x": [], "obb1y": [], "obb2x": [], "obb2y": [],
+        "obb3x": [], "obb3y": [], "obb4x": [], "obb4y": []
+    }
 
-    bb_ann = {"cat_id": [], "xc": [], "yc": [], "w": [], "h": [], 
-        "obb1x": [], "obb1y": [], "obb2x": [], "obb2y": [], 
-        "obb3x": [], "obb3y": [], "obb4x": [], "obb4y": []}
-
-    occ_aware_seg_map = cv2.imread(os.path.join(occ_aware_seg_path, img_filename), -1)
-    occ_ignore_seg_map = cv2.imread(os.path.join(occ_ignore_seg_path, img_filename), -1)
-    zoomed_out_seg_map = cv2.imread(os.path.join(zoomed_out_seg_path, img_filename), -1)
-    img = cv2.imread(os.path.join(img_path, img_filename))
+    occ_aware_seg_map = cv2.imread(str(occ_aware_seg_path / img_filename), -1)
+    occ_ignore_seg_map = cv2.imread(str(occ_ignore_seg_path / img_filename), -1)
+    zoomed_out_seg_map = cv2.imread(str(zoomed_out_seg_path / img_filename), -1)
+    img = cv2.imread(str(img_path_obj))
 
     img_h, img_w = occ_aware_seg_map.shape[:2]
 
@@ -210,6 +208,7 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
         img_bb, img_obb, img_seg = img.copy(), img.copy(), img.copy()
 
     detections = []
+    ann_id = 1
     for inst in instances:
         cat_id = int(inst // 1000)
 
@@ -279,9 +278,6 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
                         img = cv2.fillPoly(img, [obb_points], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
                         img = cv2.fillPoly(img, [obb_points2], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
 
-
-
-
         if view_annotations and len(bb_ann["xc"]) not in overlapping: # if current instance isn't overlapping
             img_bb = cv2.rectangle(img_bb, (x_bb, y_bb), (x_bb+w, y_bb+h), color=colors[cat_id], thickness=2)
             img_obb = cv2.polylines(img_obb, [obb_points], isClosed=True, color=colors[cat_id], thickness=2)
@@ -302,7 +298,7 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
         bb_ann["obb4y"].append(obb_points[3][1])
 
         ann_info = {
-                    "id": random.randrange(1,10000), # TODO: find robust way for this
+                    "id": ann_id,
                     "image_id":img_id,
                     "category_id": cat_id,
                     "bbox":[
@@ -316,27 +312,36 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
                     "iscrowd": 0
                     }
 
+        ann_id += 1
         img_ann_info.append(ann_info)
 
 
-
     df = pd.DataFrame.from_dict(bb_ann)
-    df = df.drop(list(overlapping)) # get rid of overlapping labels
+    df = df.drop(list(overlapping))  # get rid of overlapping labels
     img_ann_info = [i for j, i in enumerate(img_ann_info) if j not in overlapping]
     yolo_col = ["cat_id", "xc", "yc", "w", "h"]
-    np.savetxt(os.path.join(yolo_labels_path, img_filename[:-4] + ".txt"), df[yolo_col], delimiter=' ', fmt=['%d', '%.4f', '%.4f', '%.4f', '%.4f'])
+    yolo_labels_file = yolo_labels_path / (img_path_obj.stem + ".txt")
+    np.savetxt(yolo_labels_file, df[yolo_col], delimiter=' ', fmt=['%d', '%.4f', '%.4f', '%.4f', '%.4f'])
 
     obb_col = ["cat_id", "obb1x", "obb1y", "obb2x", "obb2y", "obb3x", "obb3y", "obb4x", "obb4y"]
-    np.savetxt(os.path.join(obb_labels_path, img_filename[:-4] + ".txt"), df[obb_col], delimiter=' ', fmt=['%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d'])
+    obb_labels_file = obb_labels_path / (img_path_obj.stem + ".txt")
+    np.savetxt(obb_labels_file, df[obb_col], delimiter=' ', fmt=['%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d'])
 
     coco_ann["annotations"].extend(img_ann_info)
-    
-    cv2.imwrite(os.path.join(img_path, img_filename), img) # overwrite overlapping regions in image
+
+    img_file = img_path / img_filename
+    cv2.imwrite(str(img_file), img)  # overwrite overlapping regions in image
 
     if view_annotations:
-        cv2.imwrite(os.path.join(yolo_annotated_path, img_filename), img_bb)
-        cv2.imwrite(os.path.join(obb_annotated_path, img_filename), img_obb)
+        cv2.imwrite(str(yolo_annotated_path / img_filename), img_bb)
+        cv2.imwrite(str(obb_annotated_path / img_filename), img_obb)
+    
+    if img_id % 50 == 0:
+        print(f"=== Processed {img_id} images")
 
+coco_annotations_file = results_dir / "coco_annotations.json"
 
-with open(os.path.join(results_dir, "coco_annotations.json"), "w") as f:
+with open(str(coco_annotations_file), "w") as f:
     json.dump(coco_ann, f)
+
+print("\nCompleted!")
