@@ -1,22 +1,23 @@
 view_annotations: True # view BBs overlayed on image
 
 occlusion_aware: True
-visibility_thresh: 0.3
+visibility_thresh: 0.5
 component_visibility_thresh: 0.1
+min_pixels: 200
 
 create_sky: True
 
-plane_size: 150 # metres
-min_obj_count: 50 # min number of objects in scene
-max_obj_count: 100 # max number of objects in scene
+plane_size: 200 # metres
+min_obj_count: 20 # min number of objects in scene
+max_obj_count: 30 # max number of objects in scene
 
-min_camera_height: 200 # metres
-max_camera_height: 250 # metres
-min_camera_tilt: 0 # degrees
-max_camera_tilt: 30 # degrees
+min_camera_height: 15 # metres
+max_camera_height: 35 # metres
+min_camera_tilt: 86 # degrees
+max_camera_tilt: 89 # degrees
 
-min_sun_energy: 1 # W/m^2
-max_sun_energy: 10 # W/m^2
-max_sun_tilt: 70 # degrees
+min_sun_energy: 2 # W/m^2
+max_sun_energy: 5 # W/m^2
+max_sun_tilt: 90 # degrees
 
-num_img: 2 # number of images to render
+num_img: 1000 # number of images to render

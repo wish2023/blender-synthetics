@@ -26,6 +26,7 @@ view_annotations = config_info["view_annotations"]
 occlusion_aware = config_info["occlusion_aware"]
 visibility_thresh = config_info["visibility_thresh"]
 component_visibility_thresh = config_info["component_visibility_thresh"]
+min_pixels = config_info["min_pixels"]
 results_dir = models_info["render_to"]
 classes = [os.path.basename(os.path.normpath(class_path)) for class_path in models_info["classes"]]
 num_classes = len(models_info["classes"])
@@ -69,7 +70,10 @@ def is_inst_visible(inst, occ_aware_seg_map, clear_seg_map, thresh):
         True if obj is considered visible to human
     """
 
-    visibility = np.count_nonzero(occ_aware_seg_map == inst) / np.count_nonzero(clear_seg_map == inst)
+    try:
+        visibility = np.count_nonzero(occ_aware_seg_map == inst) / np.count_nonzero(clear_seg_map == inst)
+    except ZeroDivisionError:
+        visibility = 0
     if visibility >= thresh:
         return True
     else:
@@ -100,6 +104,20 @@ def remove_small_components(inst, occ_aware_seg_map, occ_ignore_seg_map, thresh)
         if component_size / inst_size < thresh:
             occ_aware_seg_map[components == i] = 0 # delete component
 
+def is_inst_too_small(inst, seg_map, min_pixels):
+    """
+    Check if an object represented by inst in seg_map has fewer pixels than min_pixels.
+
+    Args:
+        inst: Instance ID of the object to check.
+        seg_map: Segmentation map where each object has a unique label.
+        min_pixels: Minimum number of pixels to consider an object.
+
+    Returns:
+        True if the object is too small (has fewer pixels than min_pixels), False otherwise.
+    """
+    obj_size = np.count_nonzero(seg_map == inst)
+    return obj_size < min_pixels
 
 def binary_mask_to_rle(binary_mask):
     """
@@ -203,6 +221,7 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
             seg_map = occ_aware_seg_map
         else:
             seg_map = occ_ignore_seg_map
+
         
         points = cv2.findNonZero((seg_map == inst).astype(int))
         if points is None:
@@ -210,6 +229,10 @@ for img_id, img_filename in enumerate(os.listdir(img_path), start=1):
         x_bb, y_bb, w, h = cv2.boundingRect(points)
         obb = cv2.minAreaRect(points)
         obb_points = cv2.boxPoints(obb).astype(int) # 4 x 2 --> 4 points for bounding box
+
+        if min_pixels > 0 and is_inst_too_small(inst, seg_map, min_pixels):
+            img = cv2.fillPoly(img, [obb_points], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+            continue
 
         if occlusion_aware and is_inst_on_edge(x_bb, y_bb, w, h, img):
             if not is_inst_visible(inst, occ_aware_seg_map, zoomed_out_seg_map, visibility_thresh):
