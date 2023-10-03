@@ -161,6 +161,10 @@ The fraction of an object components that must be visible by the camera for it t
 
 ![camera diagram](diagrams/comvisthresh.png)
 
+#### Minimum Pixels
+
+The minimum amount of pixels of an object that must be visible by the camera for it to be considered visible to a human annotator. 
+
 ### Camera configurations
 
 ![camera diagram](diagrams/camera.png)
