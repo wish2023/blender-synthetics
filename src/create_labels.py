@@ -339,7 +339,7 @@ for img_id, img_path_obj in enumerate(img_path.glob('*'), start=1):
     if img_id % 50 == 0:
         print(f"=== Processed {img_id} images")
 
-coco_annotations_file = results_dir / "coco_annotations.json"
+coco_annotations_file = Path(results_dir) / "coco_annotations.json"
 
 with open(str(coco_annotations_file), "w") as f:
     json.dump(coco_ann, f)
