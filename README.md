@@ -81,9 +81,60 @@ git clone https://github.com/tehwenyi/blender-synthetics.git
     conda activate blender
     ```
 
-5. **Install bpycv in Blender:**
+5. **Adding Blender's Executable to the System PATH**
 
-    You may run this in PowerShell or your virtual environment.
+   **Locate the Blender Executable Path:**
+
+   First, find the exact path where Blender is installed. The default installation path for Blender is usually:
+
+   `C:\Program Files\Blender Foundation\Blender <version>\`
+
+   For example:
+
+   `C:\Program Files\Blender Foundation\Blender 3.6\`
+
+    **Add the Blender Path to the System PATH:**
+
+    1. **Open System Properties:**
+
+    - Press `Win + R` to open the Run dialog.
+    - Type `sysdm.cpl` and press Enter to open the System Properties window.
+
+    2. **Open Environment Variables:**
+
+    - In the System Properties window, go to the **Advanced** tab.
+    - Click on **Environment Variables...** at the bottom.
+
+    3. **Edit the PATH Variable:**
+
+    - In the Environment Variables window, find the `Path` variable under "System variables" or "User variables" (depending on whether you want the change to apply system-wide or just for your user account).
+    - Select `Path` and click **Edit...**.
+
+    4. **Add a New Entry:**
+
+    - Click **New** and add the path to your Blender installation (e.g., `C:\Program Files\Blender Foundation\Blender 3.6\`).
+
+    5. **Save and Close:**
+
+    - Click **OK** to close each window and save your changes.
+
+    6. **Restart Command Prompt or PowerShell:**
+
+    - Close and reopen any Command Prompt or PowerShell windows you have open to apply the changes to the PATH variable.
+
+    7. **Test the `blender` Command:**
+
+    - Now, open a new Command Prompt or PowerShell window and type:
+
+    ```bash
+    blender
+    ```
+
+    - If Blender launches, then it is correctly recognized.
+
+6. **Install bpycv in Blender:**
+
+    You may run the following commands in PowerShell or your virtual environment.
 
     ```bash
     blender -b --python-expr "from subprocess import sys, call; call([sys.executable,'-m','ensurepip'])"
@@ -91,7 +142,20 @@ git clone https://github.com/tehwenyi/blender-synthetics.git
     blender -b --python-expr "from subprocess import sys, call; call([sys.executable]+'-m pip install --target="$TARGET" -U bpycv'.split())"
     ```
 
-6. **Install Required Python Packages in Blender:**
+    If the above commands do not work (or bpycv is still not installed), use Blender's scripting terminal:
+
+    1. Open Blender.
+    2. Go to the Scripting workspace/tab.
+    3. Copy and paste the following lines into the scripting terminal:
+    ```bash
+    from subprocess import sys, call; call([sys.executable,'-m','ensurepip'])
+    from subprocess import sys, call; call([sys.executable]+'-m pip install --target="$TARGET" -U pip setuptools wheel'.split())
+    from subprocess import sys, call; call([sys.executable]+'-m pip install --target="$TARGET" -U bpycv'.split())
+    ```
+    4. Run the script to install bpycv in Blender.
+    
+
+7. **Install Required Python Packages in Blender:**
 
     - Locate Blender's Python executable in the Blender installation directory. (eg. `"C:\Program Files\Blender Foundation\Blender 3.6\3.6\python\bin\python.exe"`)
     - Ensure you are in the folder of this repo (containing `requirements.txt`).
@@ -105,7 +169,7 @@ git clone https://github.com/tehwenyi/blender-synthetics.git
         ```
     - Option 3: Install the packages via your virtual environment.
 
-7. **Setup Completed**
+8. **Setup Completed**
 
     You have completed the setup. Proceed to [Generate synthetics](#generate-synthetics) to run the synthetic dataset generation process. 
 
@@ -120,6 +184,8 @@ To generate synthetic datasets for object detection:
 2. **Generate Images:**
 
     `blender -b -P src/render_blender.py`
+
+    * Note you have to do this in Anaconda Prompt if on Windows
 
 3. **Generate Annotations:**
 
