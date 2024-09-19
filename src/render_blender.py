@@ -444,7 +444,7 @@ def is_plane(obj):
         print("No plane found. Unable to generate scene.")
         raise TypeError
 
-def hair_emission(min_obj_count, max_obj_count, scale=1):
+def hair_emission(min_obj_count, max_obj_count, plane_name, scale=1):
     """
     Emit 3D models from plane
 
@@ -457,12 +457,22 @@ def hair_emission(min_obj_count, max_obj_count, scale=1):
     """
 
     objects = bpy.data.objects
-    plane = objects["Plane"] 
+    context = bpy.context
+
+    # Ensure the plane exists
+    if plane_name not in objects:
+        raise Exception("Plane object not found in the scene.")
+
+    plane = objects[plane_name]
 
     context.view_layer.objects.active = plane
-    ops.object.particle_system_add()
-    
-    particle_count = random.randrange(min_obj_count, max_obj_count)
+
+    # Add particle system to the plane
+    bpy.ops.object.particle_system_add()
+    ps = plane.particle_systems[-1]
+    psys = ps.settings
+
+    particle_count = random.randint(min_obj_count, max_obj_count)
     particle_scale = scale
 
     ps = plane.modifiers.new("part", 'PARTICLE_SYSTEM')
@@ -486,6 +496,7 @@ def hair_emission(min_obj_count, max_obj_count, scale=1):
     psys.settings.use_scale_instance = True
     psys.settings.use_rotation_instance = True
     psys.settings.use_global_instance = True
+    psys.settings.use_collection_pick_random = True
     
     # ROTATION
     psys.settings.use_rotations = True
@@ -493,29 +504,35 @@ def hair_emission(min_obj_count, max_obj_count, scale=1):
     psys.settings.phase_factor_random = 2.0 # change to random num (0 to 2.0)
     psys.settings.child_type = "NONE"
         
+    bpy.types.ParticleSettings.distribution = "RAND"
     plane.select_set(True)
     ops.object.duplicates_make_real()
-    plane.modifiers.remove(ps)
-    
-    objs = context.selected_objects
-    coll_target = context.scene.collection.children.get("Instances")
-    coll_obstacles = context.scene.collection.children.get("Obstacles")
-    for i, obj in enumerate(objs):
-        for coll in obj.users_collection:
-            coll.objects.unlink(obj)
-        
-        obj_copy = obj
-        obj_copy.data = obj.data.copy()
-        obj_copy.hide_render = False
 
-        if is_target(obj_copy):
-            coll_target.objects.link(obj_copy)
+    # Ensure the collection is visible
+    for obj in context.selected_objects:
+        obj.hide_render = False
+
+    plane.modifiers.remove(ps)
+
+    coll_instances = bpy.data.collections.get("Instances")
+    coll_obstacles = bpy.data.collections.get("Obstacles")
+    original_objs = set(bpy.context.scene.objects)
+    for i, obj in enumerate(original_objs):
+        obj_copy = obj.copy()
+        if obj.data:
+            obj_copy.data = obj.data.copy()
+
+        if is_target(obj):
+            coll_instances.objects.link(obj_copy)
             inst_id = get_cat_id(obj_copy) * 1000 + i + 1 # cannot have inst_id = 0
             obj_copy["inst_id"] = inst_id # for bpycv
-        elif is_obstacle(obj_copy):
+        elif is_obstacle(obj):
             coll_obstacles.objects.link(obj_copy)
+        elif obj.name == plane_name or obj.name.split('.')[0] == "Plane" or obj.name == "Sun" or obj.name == "Camera" or obj.name == "Empty":
+            continue
         else:
             raise Exception(obj_copy.name, "is neither an obstacle nor a target")
+
 
 
 def blender_setup():
@@ -640,6 +657,7 @@ if __name__ == "__main__":
             raise Exception(f"Scene type '{scene_type}' doesn't fit any of the acceptable types: Image, Plane or Colormap")
 
         # idx_scene-name_cam-height_cam-tilt
+        scene_name = scene_name.replace("_", "-")
         render_name = f"{i}_{scene_name}_{camera_details}.png"
         render(Path(render_path), render_name)
 
