@@ -258,7 +258,7 @@ def add_sun(min_sun_energy, max_sun_energy, max_sun_tilt):
     context.scene.objects["Sun"].rotation_euler[2] = random.uniform(0, 2*math.pi)
     
     
-def add_camera(camera_height_range, camera_tilt_range):
+def add_camera(camera_height, camera_tilt, camera_horizontal_fov):
     """
     Create camera with random height and viewing angles
 
@@ -270,12 +270,22 @@ def add_camera(camera_height_range, camera_tilt_range):
         Details of generated camera (str)
     """
     
-    min_camera_tilt, max_camera_tilt = camera_tilt_range
-    min_camera_height, max_camera_height = camera_height_range
+    # min_camera_tilt, max_camera_tilt = camera_tilt_range
+    # min_camera_height, max_camera_height = camera_height_range
 
-    z = random.randrange(min_camera_height, max_camera_height)
-    ops.object.camera_add(enter_editmode=False, align='VIEW', location=(0,0,z), rotation=(0, 0, 0), scale=(1, 1, 1))
+    # z = random.randrange(min_camera_height, max_camera_height)
+    x_loc = random.randint(-15, 15) # TODO: Values currently hard-coded
+    y_loc = random.randint(-15, 15) # TODO: Values currently hard-coded
+    ops.object.camera_add(enter_editmode=False, align='VIEW', location=(x_loc,y_loc,camera_height), rotation=(0, 0, 0), scale=(1, 1, 1))
     context.scene.camera = context.object
+
+    # TODO: HERE
+    # Set clipping distances
+    camera = context.scene.camera.data
+    camera.clip_start = camera_height / 2.0
+    camera.clip_end = camera_height * 1000
+
+    camera.angle = math.radians(camera_horizontal_fov)
 
     ops.object.empty_add(type='PLAIN_AXES', align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
 
@@ -285,11 +295,11 @@ def add_camera(camera_height_range, camera_tilt_range):
     ops.object.parent_set(type='OBJECT', keep_transform=False)
     ops.object.select_all(action='DESELECT')
 
-    camera_tilt = random.randint(min_camera_tilt, max_camera_tilt)
+    # camera_tilt = random.randint(min_camera_tilt, max_camera_tilt)
     context.scene.objects["Empty"].rotation_euler[0] = math.radians(camera_tilt)
     context.scene.objects["Empty"].rotation_euler[2] = random.uniform(0, 2*math.pi)
     
-    return f"{z}m_{camera_tilt}deg"
+    return f"{camera_height}m_{camera_tilt}deg"
     
 
 def print_inputs():
@@ -575,6 +585,7 @@ if __name__ == "__main__":
     max_sun_energy = config_info["max_sun_energy"]
     max_sun_tilt = config_info["max_sun_tilt"]
     num_img = config_info["num_img"]
+    camera_horizontal_fov = config_info["camera_horizontal_fov"]
     plane_size = config_info["plane_size"]
     min_obj_count = config_info["min_obj_count"]
     max_obj_count = config_info["max_obj_count"]
@@ -595,6 +606,10 @@ if __name__ == "__main__":
         print("---------------------------------------")
         print("Objects imported")
         print("---------------------------------------")
+
+        # Randomizing parameters
+        camera_height = random.randrange(min_camera_height, max_camera_height)
+        camera_tilt = random.randint(min_camera_tilt, max_camera_tilt)
         
         # plane_size = calculate_plane_size(camera_height, camera_tilt, camera_horizontal_fov)
         scene_type, scene_name = create_plane(plane_size, scenes_list=scenes_list)
