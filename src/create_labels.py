@@ -6,6 +6,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import random
+import time
 
 import cv2
 
@@ -166,6 +167,7 @@ def is_inst_on_edge(x_bb, y_bb, w, h, img):
     """
     return x_bb == 0 or y_bb == 0 or x_bb+w == img.shape[1] or y_bb+h == img.shape[0]
 
+start_time = time.time()
 
 for i in range(num_classes):
     cat_info = {
@@ -344,4 +346,9 @@ coco_annotations_file = Path(results_dir) / "coco_annotations.json"
 with open(str(coco_annotations_file), "w") as f:
     json.dump(coco_ann, f)
 
+end_time = time.time()
+total_time = end_time - start_time
+hours, remainder = divmod(total_time, 3600)
+minutes, seconds = divmod(remainder, 60)
+print(f"Time taken for to create labels: {int(hours)}h{int(minutes)}m{seconds:.2f}s")
 print("\nCompleted!")
