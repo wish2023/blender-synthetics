@@ -14,8 +14,35 @@ import time
 
 from pathlib import Path
 
+IMG_SUFFIXES = [".png", ".jpg", ".jpeg"]
 
-def create_plane(plane_size=500, scenes_list=None):
+def calculate_plane_size(camera_height, camera_tilt, camera_fov, aspect_ratio=16/9):
+    """
+    Calculate the minimum plane size needed to capture the whole plane in the camera view.
+
+    Args:
+        camera_height (float): The height of the camera above the plane.
+        camera_tilt (float): The tilt angle of the camera in degrees.
+        camera_fov (float): The field of view of the camera in degrees.
+        aspect_ratio (float): The aspect ratio of the camera (width/height). Default is 16/9.
+
+    Returns:
+        (float, float): The width and height of the plane.
+    """
+    # Convert camera tilt and FOV from degrees to radians
+    tilt_radians = math.radians(camera_tilt)
+    fov_radians = math.radians(camera_fov)
+
+    # Calculate the distance from the camera to the plane (along the line of sight)
+    distance_to_plane = camera_height / math.cos(tilt_radians)
+
+    # Calculate the viewable width and height on the plane
+    viewable_height = 2 * (distance_to_plane * math.tan(fov_radians / 2))
+    viewable_width = viewable_height * aspect_ratio
+
+    return max(viewable_width, viewable_height)
+
+def create_plane(plane_size=250, scenes_list=None): # Change to 750
     """
     Create surface to place objects on
 
@@ -24,35 +51,64 @@ def create_plane(plane_size=500, scenes_list=None):
         scenes_list: Directories containing custom textures
 
     Returns:
-        Name of scene (str)
+        Type of background (str), Name of scene (str)
     """
-
-    subdivide_count = 100
-    ops.mesh.primitive_plane_add(size=plane_size, enter_editmode=False, align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
-    ops.object.editmode_toggle()
-    ops.mesh.subdivide(number_cuts=subdivide_count)
-    ops.object.editmode_toggle()
 
     attempt_count = 10
     if scenes_list:
         for _ in range(attempt_count):
-            scene = random.choice(scenes_list) if scenes_list else None
-            if scene and generate_texture(Path(scene)):
-                scene_name = str(Path(scene).stem).replace("_", "-")
-                break
-            print(f"WARNING: {scene} invalid. Unable to generate texture.")
+            scene = random.choice(scenes_list)
+            # Image as plane or as texture
+            if Path(scene).suffix in IMG_SUFFIXES and import_image_as_plane(scene, plane_size):
+                return "Image", Path(scene).stem
+            
+            else:
+                print(f"Using plane size of {plane_size}")
+                subdivide_count = 100
+                ops.mesh.primitive_plane_add(size=plane_size, enter_editmode=False, align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
+                ops.object.editmode_toggle()
+                ops.mesh.subdivide(number_cuts=subdivide_count)
+                ops.object.editmode_toggle()
+                if generate_texture(Path(scene)):
+                    return "Plane", Path(scene).stem
+
+            print(f"WARNING: {scene} invalid. Unable to generate texture. Trying again...")
         else:
-            print(f"Unable to find a suitable scene with all 4 textures within {attempt_count} attempts")
-            scene_name = None
-    else:
-        scene_name = None
+            print(f"Unable to find a suitable scene within {attempt_count} attempts")
 
-    if scene_name:
-        return scene_name
-    else:
-        generate_random_background()
-        return "colormap"
+    # Generate colormap
+    generate_random_background()
+    return "Colormap", "colormap"
 
+def import_image_as_plane(image_path, plane_size):
+    addon_name = "io_import_images_as_planes"  # Replace with the name of the add-on you want to enable
+
+    if addon_name not in bpy.context.preferences.addons:
+        bpy.ops.preferences.addon_enable(module=addon_name)
+        print(f"The add-on '{addon_name}' has been enabled.")
+    else:
+        print(f"The add-on '{addon_name}' is already enabled.")
+
+    if Path(image_path).exists():
+        bpy.ops.import_image.to_plane(
+            files=[{'name':str(image_path)}],
+            location=(0, 0, 0),
+            align='WORLD', 
+            align_axis='Z+',
+            size_mode='ABSOLUTE',
+            height=plane_size,
+            blend_method='OPAQUE',
+            extension='REPEAT',
+            shader='PRINCIPLED'
+            )
+        bpy.context.view_layer.update()
+        bpy.context.view_layer.objects.active = None
+
+    else:
+        print("Image path doesn't exist")
+        return False
+    
+    return True
    
 def generate_texture(texture_path):
     """
@@ -498,7 +554,16 @@ if __name__ == "__main__":
 
     classes_list = models_info["classes"]
 
-    scenes_list = [str(scene_path) for scene_path in Path(models_info["scenes"]).iterdir() if scene_path.is_dir()] if "scenes" in models_info else None
+    if "scenes" in models_info:
+        scenes_path = Path(models_info["scenes"])
+        scenes_list = [
+            str(scene_path) 
+            for scene_path in scenes_path.iterdir() 
+            if scene_path.is_dir() or (scene_path.is_file() and scene_path.suffix in IMG_SUFFIXES)
+        ]
+    else:
+        scenes_list = None
+
     obstacles_path = models_info["obstacles_path"] if "obstacles_path" in models_info else ""
     obstacles_list = [obj.stem for obj in Path(obstacles_path).glob("*") if obj.is_file()]
     render_path = models_info["render_to"]
@@ -531,12 +596,18 @@ if __name__ == "__main__":
         print("Objects imported")
         print("---------------------------------------")
         
-        scene_name = create_plane(plane_size, scenes_list=scenes_list)
-        if create_sky: add_sky()
+        # plane_size = calculate_plane_size(camera_height, camera_tilt, camera_horizontal_fov)
+        scene_type, scene_name = create_plane(plane_size, scenes_list=scenes_list)
+        if create_sky: add_sky()        
         add_sun(min_sun_energy, max_sun_energy, max_sun_tilt)
 
-        camera_details = add_camera((min_camera_height, max_camera_height), (min_camera_tilt, max_camera_tilt))
-        hair_emission(min_obj_count, max_obj_count)
+        camera_details = add_camera(camera_height, camera_tilt, camera_horizontal_fov)
+        if scene_type == "Image":
+            hair_emission(min_obj_count, max_obj_count, scene_name)
+        elif scene_type == "Colormap" or scene_type == "Plane":
+            hair_emission(min_obj_count, max_obj_count, "Plane")
+        else:
+            raise Exception(f"Scene type '{scene_type}' doesn't fit any of the acceptable types: Image, Plane or Colormap")
 
         # idx_scene-name_cam-height_cam-tilt
         render_name = f"{i}_{scene_name}_{camera_details}.png"
