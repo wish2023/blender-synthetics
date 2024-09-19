@@ -428,6 +428,21 @@ def is_obstacle(obj):
     except TypeError as e:
         print("No objects and obstacles found. Unable to generate scene.")
         raise TypeError
+    
+def is_plane(obj):
+    """
+    Args:
+        obj: Blender object
+
+    Returns:
+        True if object is an obstacle
+    """
+
+    try:
+        return obj.name == "Plane"
+    except TypeError as e:
+        print("No plane found. Unable to generate scene.")
+        raise TypeError
 
 def hair_emission(min_obj_count, max_obj_count, scale=1):
     """
