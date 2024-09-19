@@ -300,6 +300,10 @@ def delete_objects():
     ops.object.select_all(action='SELECT')
     ops.object.delete()
 
+    ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+    bpy.data.orphans_purge()
+
 def configure_gpu():
     """
     Use GPU if available
