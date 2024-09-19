@@ -169,7 +169,12 @@ git clone https://github.com/tehwenyi/blender-synthetics.git
         ```
     - Option 3: Install the packages via your virtual environment.
 
-8. **Setup Completed**
+8. **(If using GPU): Set Blender to use CUDA**
+
+    - Open Blender application
+    - `Edit` > `Preferences` > `System` and select CUDA
+
+9. **Setup Completed**
 
     You have completed the setup. Proceed to [Generate synthetics](#generate-synthetics) to run the synthetic dataset generation process. 
 
