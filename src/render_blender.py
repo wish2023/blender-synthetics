@@ -566,7 +566,7 @@ def render(render_path, render_name="synthetics.png"):
     zoomed_out_seg_path.mkdir(parents=True, exist_ok=True)
 
     result = bpycv.render_data()
-    for obj in bpy.data.collections['Obstacles'].all_objects:
+    for obj in bpy.data.collections.get("Obstacles").objects:
         obj.hide_render = True
     hidden_obstacles_result = bpycv.render_data(render_image=False)
     bpy.data.objects["Empty"].scale = (1.05, 1.05, 1.05)
