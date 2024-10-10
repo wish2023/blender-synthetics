@@ -1,126 +1,101 @@
-from itertools import groupby
 import json
 from pathlib import Path
 import yaml
-
 import numpy as np
 import pandas as pd
-import random
 import time
-
 import cv2
+import copy
+from itertools import groupby
 
+def load_yaml(file_path):
+    with open(file_path) as file:
+        return yaml.load(file, Loader=yaml.FullLoader)
 
-with open("./config/render_parameters.yaml") as file:
-    config_info = yaml.load(file, Loader=yaml.FullLoader)
-
-with open("./config/models.yaml") as file:
-    models_info = yaml.load(file, Loader=yaml.FullLoader)
-
-for key, value in models_info.items():
-    print(f"{key}: {value}")
-
-for key, value in config_info.items():
-    print(f"{key}: {value}")
-
-view_annotations = config_info["view_annotations"]
-occlusion_aware = config_info["occlusion_aware"]
-visibility_thresh = config_info["visibility_thresh"]
-component_visibility_thresh = config_info["component_visibility_thresh"]
-min_pixels = config_info["min_pixels"]
-results_dir = models_info["render_to"]
-classes = [Path(class_path).stem for class_path in models_info["classes"]]
-num_classes = len(models_info["classes"])
-
-base_path = Path(results_dir)
-img_path = base_path / "img"
-occ_aware_seg_path = base_path / "seg_maps"
-occ_ignore_seg_path = base_path / "other_seg_maps"
-zoomed_out_seg_path = base_path / "zoomed_out_seg_maps"
-yolo_annotated_path = base_path / "yolo_annotated"
-obb_annotated_path = base_path / "obb_annotated"
-yolo_labels_path = base_path / "yolo_labels"
-obb_labels_path = base_path / "obb_labels"
-
-yolo_annotated_path.mkdir(parents=True, exist_ok=True)
-obb_annotated_path.mkdir(parents=True, exist_ok=True)
-yolo_labels_path.mkdir(parents=True, exist_ok=True)
-obb_labels_path.mkdir(parents=True, exist_ok=True)
-
-coco_ann = {"images": [], "categories": [], "annotations": []}
-
-colors = {}
-for i in range(num_classes):
-    random_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-    colors[i] = random_color
-
-
-def is_inst_visible(inst, occ_aware_seg_map, clear_seg_map, thresh):
+def create_directories(directory_paths):
     """
+    Create directories specified in the directory_paths list.
+    If a directory path is a dictionary, it recursively creates
+    directories for its values.
+    """
+    for directory in directory_paths:
+        if isinstance(directory, Path):
+            directory.mkdir(parents=True, exist_ok=True)
+        elif isinstance(directory, dict):
+            create_directories(directory.values())
+
+def initialize_paths(results_directory):
+    """
+    Initialize and create directory paths for storing results.
+    """
+    base_path = Path(results_directory)
+    paths = {
+        "images": base_path / "img",
+        "img_unoccluded_objects_only": base_path / "img_unoccluded_objects_only",
+        "segmentation_maps": base_path / "seg_maps",
+        "other_segmentation_maps": base_path / "other_seg_maps",
+        "zoomed_out_segmentation_maps": base_path / "zoomed_out_seg_maps",
+        "yolo_labels": {
+            "hbb_all_objs": base_path / "yolo_labels" / "hbb_all_objects",
+            "obb_all_objs": base_path / "yolo_labels" / "obb_all_objects",
+            "hbb_unoccluded_objects_only": base_path / "yolo_labels" / "hbb_unoccluded_objects_only",
+            "obb_unoccluded_objects_only": base_path / "yolo_labels" / "obb_unoccluded_objects_only",
+        },
+        "visualization": {
+            "hbb_all_objs": base_path / "visualization" / "hbb_all_objects",
+            "obb_all_objs": base_path / "visualization" / "obb_all_objects",
+            "hbb_unoccluded_objects_only": base_path / "visualization" / "hbb_unoccluded_objects_only",
+            "obb_unoccluded_objects_only": base_path / "visualization" / "obb_unoccluded_objects_only",
+        }
+    }
+    create_directories(paths.values())
+    return paths
+
+def inst_is_visible(instance_id, occlusion_aware_segmentation_map, clear_segmentation_map, visibility_threshold):
+    """
+    Determine if an object is considered visible based on the visibility threshold.
+
     Args:
-        inst: Instance ID of object
-        occ_aware_seg_map: Original segmentation map
-        clear_seg_map: Segmentation map with fully visible objects
-        thresh: portion of obj that needs to be visible
+        instance_id (int): The ID of the object to check.
+        occlusion_aware_segmentation_map (np.ndarray): Segmentation map accounting for occlusions.
+        clear_segmentation_map (np.ndarray): Segmentation map without occlusions.
+        visibility_threshold (float): The minimum ratio of visible area to total area for an object to be considered visible.
 
     Returns:
-        True if obj is considered visible to human
+        bool: True if the object is considered visible, False otherwise.
     """
-
     try:
-        visibility = np.count_nonzero(occ_aware_seg_map == inst) / np.count_nonzero(clear_seg_map == inst)
+        # Calculate the ratio of visible pixels to total pixels for the object
+        visible_ratio = np.count_nonzero(occlusion_aware_segmentation_map == instance_id) / np.count_nonzero(clear_segmentation_map == instance_id)
     except ZeroDivisionError:
-        visibility = 0
-    if visibility >= thresh:
-        return True
-    else:
-        return False
+        # If there are no pixels for this object in the clear map, set visibility ratio to 0
+        visible_ratio = 0
+    
+    # Return True if the object meets the visibility threshold, otherwise False
+    return visible_ratio >= visibility_threshold
 
-
-def remove_small_components(inst, occ_aware_seg_map, occ_ignore_seg_map, thresh):
+def inst_too_small(instance_id, segmentation_map, min_pixel_count):
     """
-    Remove components of objects that aren't visible to human
-
-    Args:
-        inst: Instance ID of object
-        occ_aware_seg_map: Original segmentation map
-        occ_ignore_seg_map: Segmentation map with obstacles removed
-        thresh: portion of obj that needs to be visible
-    """
-
-    inst_size = np.count_nonzero(occ_ignore_seg_map == inst)
-    seg_map_copy = np.copy(occ_aware_seg_map)
-    seg_map_copy[occ_aware_seg_map != inst] = 0
-    seg_map_copy[occ_aware_seg_map == inst] = 1
-    seg_map_copy = seg_map_copy.astype('uint8')
-
-    num_components, components = cv2.connectedComponents(seg_map_copy)
-
-    for i in range(1, num_components):
-        component_size = np.count_nonzero(components == i)
-        if component_size / inst_size < thresh:
-            occ_aware_seg_map[components == i] = 0 # delete component
-
-def is_inst_too_small(inst, seg_map, min_pixels):
-    """
-    Check if an object represented by inst in seg_map has fewer pixels than min_pixels.
-
-    Args:
-        inst: Instance ID of the object to check.
-        seg_map: Segmentation map where each object has a unique label.
-        min_pixels: Minimum number of pixels to consider an object.
+    Check if an instance has fewer pixels than a given threshold.
 
     Returns:
-        True if the object is too small (has fewer pixels than min_pixels), False otherwise.
+        bool: True if the instance is too small, False otherwise.
     """
-    obj_size = np.count_nonzero(seg_map == inst)
-    return obj_size < min_pixels
+    if min_pixel_count <= 0:
+        return False
+    object_size = np.count_nonzero(segmentation_map == instance_id)
+    return object_size < min_pixel_count
 
 def binary_mask_to_rle(binary_mask):
     """
-    Convert binary mask to run length encoding.
-    """
+    Convert a binary mask to run-length encoding (RLE).
 
+    Args:
+        binary_mask (np.ndarray): A 2D binary mask where 1 indicates the presence of an object.
+
+    Returns:
+        dict: Dictionary containing 'counts' (RLE counts) and 'size' (shape of the mask).
+    """
     rle = {'counts': [], 'size': list(binary_mask.shape)}
     counts = rle.get('counts')
     for i, (value, elements) in enumerate(groupby(binary_mask.ravel(order='F'))):
@@ -129,223 +104,346 @@ def binary_mask_to_rle(binary_mask):
         counts.append(len(list(elements)))
     return rle
 
-
-def intersect(x1, y1, x2, y2, x3, y3, x4, y4):
+def lines_intersect(x1, y1, x2, y2, x3, y3, x4, y4):
     """
-    Args:
-        x1: Line 1 x coordinate of start point
-        y1: Line 1 y coordinate of start point
-        x2: Line 1 x coordinate of end point
-        y2: Line 1 y coordinate of end point
-        x3: Line 2 x coordinate of start point
-        y3: Line 2 y coordinate of start point
-        x4: Line 2 x coordinate of end point
-        y4: Line 2 y coordinate of end point
-
-    Returns:
-        True if lines intersect
-    """
-    def ccw(x1, y1, x2, y2, x3, y3):
-        return (y3-y1) * (x2-x1) > (y2-y1) * (x3-x1)
-
-    return ccw(x1, y1 ,x3, y3, x4, y4) != ccw(x2, y2, x3, y3, x4, y4) and \
-        ccw(x1, y1, x2, y2, x3, y3) != ccw(x1, y1, x2, y2, x4, y4)
-
-
-def is_inst_on_edge(x_bb, y_bb, w, h, img):
-    """
+    Check if two lines intersect.
 
     Args:
-        x_bb: Bounding box top left x coordinate
-        y_bb: Bounding box top left y coordinate
-        w: Bounding box width
-        h: Bounding box height
-        img: np array of image
+        x1, y1 (float): Start coordinates of the first line.
+        x2, y2 (float): End coordinates of the first line.
+        x3, y3 (float): Start coordinates of the second line.
+        x4, y4 (float): End coordinates of the second line.
 
     Returns:
-        True if bounding box lies on edge of image
+        bool: True if the lines intersect, False otherwise.
     """
-    return x_bb == 0 or y_bb == 0 or x_bb+w == img.shape[1] or y_bb+h == img.shape[0]
+    def is_counter_clockwise(x1, y1, x2, y2, x3, y3):
+        return (y3 - y1) * (x2 - x1) > (y2 - y1) * (x3 - x1)
 
+    return is_counter_clockwise(x1, y1, x3, y3, x4, y4) != is_counter_clockwise(x2, y2, x3, y3, x4, y4) and \
+           is_counter_clockwise(x1, y1, x2, y2, x3, y3) != is_counter_clockwise(x1, y1, x2, y2, x4, y4)
+
+def calculate_overlap_ratio(x1, y1, x2, y2, x3, y3, x4, y4):
+    """
+    Calculate the overlap ratio between two bounding boxes.
+
+    Args:
+        x1, y1, x2, y2 (float): Coordinates of the first bounding box.
+        x3, y3, x4, y4 (float): Coordinates of the second bounding box.
+
+    Returns:
+        float: The overlap ratio, ranging from 0.0 (no overlap) to 1.0 (complete overlap).
+    """
+    overlap_x1 = max(min(x1, x2), min(x3, x4))
+    overlap_y1 = max(min(y1, y2), min(y3, y4))
+    overlap_x2 = min(max(x1, x2), max(x3, x4))
+    overlap_y2 = min(max(y1, y2), max(y3, y4))
+
+    overlap_width = max(0, overlap_x2 - overlap_x1)
+    overlap_height = max(0, overlap_y2 - overlap_y1)
+
+    box1_area = abs(x2 - x1) * abs(y2 - y1)
+    box2_area = abs(x4 - x3) * abs(y4 - y3)
+
+    overlap_area = overlap_width * overlap_height
+    total_area = box1_area + box2_area - overlap_area
+    overlap_ratio = overlap_area / total_area if total_area > 0 else 0.0
+    
+    return overlap_ratio
+
+def inst_on_edge(x_bounding_box, y_bounding_box, bounding_box_width, bounding_box_height, image):
+    """
+    Check if a bounding box lies on the edge of an image.
+
+    Args:
+        x_bounding_box (int): X-coordinate of the top-left corner of the bounding box.
+        y_bounding_box (int): Y-coordinate of the top-left corner of the bounding box.
+        bounding_box_width (int): Width of the bounding box.
+        bounding_box_height (int): Height of the bounding box.
+        image (np.ndarray): The image array.
+
+    Returns:
+        bool: True if the bounding box lies on the edge, False otherwise.
+    """
+    return (x_bounding_box == 0 or 
+            y_bounding_box == 0 or 
+            x_bounding_box + bounding_box_width == image.shape[1] or 
+            y_bounding_box + bounding_box_height == image.shape[0])
+
+def setup_categories(class_count, class_names):
+    """
+    Set up category information for annotations.
+
+    Returns:
+        list: List of dictionaries, each containing an 'id' and 'name' for a category.
+    """
+    return [{"id": (i + 1), "name": class_names[i]} for i in range(class_count)]
+
+def annotate_yolo_labels(yolo_label_path, image_path, output_path):
+    """
+    Annotate YOLO labels on the given image and save the annotated image.
+    """
+    image = cv2.imread(image_path)
+    if image is None:
+        raise cv2.error(f"Error: Unable to load image from the specified path: {image_path}")
+
+    try:
+        with open(yolo_label_path, 'r') as label_file:
+            label_lines = label_file.readlines()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Error: YOLO label file not found at path: {yolo_label_path}")
+
+    expected_num_values = -1
+    for label_line in label_lines:
+        label_values = list(map(float, label_line.strip().split()))
+
+        if expected_num_values == -1:
+            expected_num_values = len(label_values)
+        
+        if len(label_values) != expected_num_values:
+            raise ValueError(f"Inconsistent number of components in '{yolo_label_path}'.")
+
+        if len(label_values) == 5:  # Regular bounding box
+            class_id, x_center_norm, y_center_norm, width_norm, height_norm = label_values
+            image_height, image_width = image.shape[:2]
+            x_center = int(x_center_norm * image_width)
+            y_center = int(y_center_norm * image_height)
+            box_width = int(width_norm * image_width)
+            box_height = int(height_norm * image_height)
+
+            x_min = int(x_center - box_width / 2)
+            y_min = int(y_center - box_height / 2)
+            x_max = int(x_center + box_width / 2)
+            y_max = int(y_center + box_height / 2)
+
+            cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
+            cv2.putText(image, str(int(class_id)), (x_min, y_min - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        
+        elif len(label_values) == 9:  # Oriented bounding box
+            class_id = int(label_values[0])
+            obb_points = [(label_values[i], label_values[i + 1]) for i in range(1, 9, 2)]
+            obb_points = np.array(obb_points, dtype=np.int32)
+            
+            cv2.polylines(image, [obb_points], isClosed=True, color=(0, 255, 0), thickness=1)
+            cv2.putText(image, str(class_id), (obb_points[0][0], obb_points[0][1] - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        
+        else:
+            raise ValueError(f"Unexpected number of values in '{yolo_label_path}'.")
+
+    success = cv2.imwrite(str(output_path), image)
+    if not success:
+        print(f"Error: Could not save the annotated image to the specified path: {output_path}")
+
+def read_image(image_path):
+    return cv2.imread(str(image_path), -1)
+
+def append_bbox_data(bbox_dict, category_id, x_bbox, bbox_width, bbox_height, obb_points, image_width):
+    bbox_dict["category_id"].append(category_id) 
+    bbox_dict["center_x"].append((x_bbox + bbox_width / 2) / image_width)
+    bbox_dict["center_y"].append((y_bbox + bbox_height / 2) / image_height)
+    bbox_dict["width"].append(bbox_width / image_width)
+    bbox_dict["height"].append(bbox_height / image_height)
+
+    for j in range(4):
+        bbox_dict[f'obb{j + 1}_x'].append(obb_points[j][0])
+        bbox_dict[f'obb{j + 1}_y'].append(obb_points[j][1])
+
+## Main processing code
+
+# Load configuration files for rendering parameters and models
+render_parameters = load_yaml("./config/render_parameters.yaml")
+model_parameters = load_yaml("./config/models.yaml")
+
+# Print loaded configuration and model parameters for verification
+for key, value in {**render_parameters, **model_parameters}.items():
+    print(f"{key}: {value}")
+
+# Extract specific configuration settings for annotations and file paths
+show_annotations = render_parameters["view_annotations"]
+visibility_threshold = render_parameters["visibility_thresh"]
+min_pixel_count = render_parameters["min_pixels"]
+results_directory = model_parameters["render_to"]
+
+# Get the class names from the model configuration
+class_names = [Path(class_path).stem for class_path in model_parameters["classes"]]
+class_count = len(model_parameters["classes"])
+
+# Initialize directory paths for storing results and set up categories for annotation
+paths = initialize_paths(results_directory)
+coco_annotations = {"images": [], "categories": setup_categories(class_count, class_names), "annotations": []}
+ 
+# Start timer to measure the total processing time
 start_time = time.time()
 
-for i in range(num_classes):
-    cat_info = {
-                "id": (i + 1),
-                "name": classes[i],
-                }
-    coco_ann["categories"].append(cat_info)
+# Initialize variables for processing images and tracking annotation IDs
+annotation_id = 1
+filled_bboxes = set()
 
-for img_id, img_path_obj in enumerate(img_path.glob('*'), start=1):
-    img_filename = img_path_obj.name
-
-    overlapping = set()  # instances which overlap
-
-    bb_ann = {
-        "cat_id": [], "xc": [], "yc": [], "w": [], "h": [],
-        "obb1x": [], "obb1y": [], "obb2x": [], "obb2y": [],
-        "obb3x": [], "obb3y": [], "obb4x": [], "obb4y": []
+# Process each image in the "images" directory
+for image_id, image_filepath in enumerate(paths["images"].glob('*'), start=1):
+    # Extract image metadata and add to the COCO annotations
+    image_filename = image_filepath.name
+    image = read_image(image_filepath)
+    image_height, image_width = image.shape[:2]
+    image_info = {
+        "id": image_id,
+        "file_name": image_filename,
+        "height": image_height,
+        "width": image_width,
     }
+    coco_annotations["images"].append(image_info)
 
-    occ_aware_seg_map = cv2.imread(str(occ_aware_seg_path / img_filename), -1)
-    occ_ignore_seg_map = cv2.imread(str(occ_ignore_seg_path / img_filename), -1)
-    zoomed_out_seg_map = cv2.imread(str(zoomed_out_seg_path / img_filename), -1)
-    img = cv2.imread(str(img_path_obj))
+    # Prepare for handling annotations and segmentation maps
+    annotation_all_objects = []
+    annotation_after_occlusion_removal = []
+    overlapping_instances = set()  # Contains instances that overlap
 
-    img_h, img_w = occ_aware_seg_map.shape[:2]
+    occlusion_aware_segmentation_map = read_image(paths["segmentation_maps"] / image_filename)
+    occlusion_ignore_segmentation_map = read_image(paths["other_segmentation_maps"] / image_filename)
+    zoomed_out_segmentation_map = read_image(paths["zoomed_out_segmentation_maps"] / image_filename)
 
-    img_info = {
-                "id":img_id,
-                "file_name":img_filename,
-                "height":img_h,
-                "width":img_w,
-                }
-    coco_ann["images"].append(img_info)
-    img_ann_info = []
+    # Initialize dictionaries to store bounding box annotations
+    bbox_annotations_all_objs = {
+        "category_id": [], "center_x": [], "center_y": [], "width": [], "height": [],
+        "obb1_x": [], "obb1_y": [], "obb2_x": [], "obb2_y": [],
+        "obb3_x": [], "obb3_y": [], "obb4_x": [], "obb4_y": []
+    }
+    bbox_annotations_after_occlusion_removal = copy.deepcopy(bbox_annotations_all_objs)
 
-    instances = np.unique(occ_aware_seg_map)
+    # Process each instance in the segmentation map
+    instances = np.unique(occlusion_aware_segmentation_map)
     instances = instances[instances != 0]
 
-    if view_annotations:
-        img_bb, img_obb, img_seg = img.copy(), img.copy(), img.copy()
-
     detections = []
-    ann_id = 1
-    for inst in instances:
-        cat_id = int(inst // 1000)
+    for instance_id in instances:
+        inst_is_occluded = False
+        category_id = int(instance_id // 1000) + 1
 
-        if not is_inst_visible(inst, occ_aware_seg_map, occ_ignore_seg_map, visibility_thresh):
-            continue
+        segmentation_map = occlusion_ignore_segmentation_map
 
-        if occlusion_aware:
-            remove_small_components(inst, occ_aware_seg_map, occ_ignore_seg_map, component_visibility_thresh)
-            seg_map = occ_aware_seg_map
-        else:
-            seg_map = occ_ignore_seg_map
-
-        
-        points = cv2.findNonZero((seg_map == inst).astype(int))
+        # Get coordinates of the object from the segmentation map
+        points = cv2.findNonZero((segmentation_map == instance_id).astype(int))
         if points is None:
             continue
-        x_bb, y_bb, w, h = cv2.boundingRect(points)
+
+        # Calculate the bounding boxes (HBB and OBB) for the object
+        x_bbox, y_bbox, bbox_width, bbox_height = cv2.boundingRect(points)
         obb = cv2.minAreaRect(points)
-        obb_points = cv2.boxPoints(obb).astype(int) # 4 x 2 --> 4 points for bounding box
+        obb_points = cv2.boxPoints(obb).astype(int)  # 4 x 2 --> 4 points for bounding box
 
-        if min_pixels > 0 and is_inst_too_small(inst, seg_map, min_pixels):
-            img = cv2.fillPoly(img, [obb_points], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
-            continue
+        # Check visibility, size, and potential occlusion of the object
+        is_too_small = inst_too_small(instance_id, segmentation_map, min_pixel_count)
+        # # Check for "invisible" where too much is occluded
+        is_invisible = not inst_is_visible(instance_id, occlusion_aware_segmentation_map, occlusion_ignore_segmentation_map, visibility_threshold)
 
-        if occlusion_aware and is_inst_on_edge(x_bb, y_bb, w, h, img):
-            if not is_inst_visible(inst, occ_aware_seg_map, zoomed_out_seg_map, visibility_thresh):
-                continue
-        elif not occlusion_aware and is_inst_on_edge(x_bb, y_bb, w, h, img):
-            img = cv2.fillPoly(img, [obb_points], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
-            continue
-
- 
-
-        for i in range(obb_points.shape[0]):
-            # iterate through line segments
-            x1, y1, x2, y2 = obb_points[i][0], obb_points[i][1], \
-                                obb_points[(i+1) % obb_points.shape[0]][0], \
-                                obb_points[(i+1) % obb_points.shape[0]][1]
-            
-            for bb_ind in range(len(bb_ann["xc"])): # number of boxes in img so far
-                obb_points2 = np.array([[bb_ann["obb1x"][bb_ind], bb_ann["obb1y"][bb_ind]], 
-                                        [bb_ann["obb2x"][bb_ind], bb_ann["obb2y"][bb_ind]], 
-                                        [bb_ann["obb3x"][bb_ind], bb_ann["obb3y"][bb_ind]], 
-                                        [bb_ann["obb4x"][bb_ind], bb_ann["obb4y"][bb_ind]]])
-
+        if is_too_small or is_invisible:
+            # Mark the object as occluded by filling the polygon with black color
+            image = cv2.fillPoly(image, [obb_points], color=(0, 0, 0))
+            inst_is_occluded = True
+        elif tuple(map(tuple, obb_points)) in filled_bboxes:
+            inst_is_occluded = True
+        else:
+            # Check if there are intersections with other bounding boxes
+            for i in range(obb_points.shape[0]):
+                x1, y1, x2, y2 = (obb_points[i][0], obb_points[i][1], 
+                                obb_points[(i + 1) % obb_points.shape[0]][0], 
+                                obb_points[(i + 1) % obb_points.shape[0]][1])
                 
-                w2, h2 = round(bb_ann["w"][bb_ind]*img_w), round(bb_ann["h"][bb_ind]*img_h)
-                x_bb2, y_bb2 = round((bb_ann["xc"][bb_ind] * img_w) - w2/2), round((bb_ann["yc"][bb_ind] * img_h) - h2/2)
+                for bbox_index in range(len(bbox_annotations_all_objs["center_x"])):
+                    obb_points2 = np.array([
+                        [bbox_annotations_all_objs["obb1_x"][bbox_index], bbox_annotations_all_objs["obb1_y"][bbox_index]],
+                        [bbox_annotations_all_objs["obb2_x"][bbox_index], bbox_annotations_all_objs["obb2_y"][bbox_index]],
+                        [bbox_annotations_all_objs["obb3_x"][bbox_index], bbox_annotations_all_objs["obb3_y"][bbox_index]],
+                        [bbox_annotations_all_objs["obb4_x"][bbox_index], bbox_annotations_all_objs["obb4_y"][bbox_index]]
+                    ])
 
+                    width2, height2 = round(bbox_annotations_all_objs["width"][bbox_index] * image_width), round(bbox_annotations_all_objs["height"][bbox_index] * image_height)
+                    x_bbox2, y_bbox2 = round((bbox_annotations_all_objs["center_x"][bbox_index] * image_width) - width2 / 2), round((bbox_annotations_all_objs["center_y"][bbox_index] * image_height) - height2 / 2)
 
-                for k in range(obb_points2.shape[0]):
-                    # iterate through second set of line segments
-                    x3, y3, x4, y4 = obb_points2[k][0], obb_points2[k][1], \
-                                obb_points2[(k+1) % obb_points2.shape[0]][0], \
-                                obb_points2[(k+1) % obb_points2.shape[0]][1]
+                    # Check for line intersections and overlap
+                    for k in range(obb_points2.shape[0]):
+                        x3, y3, x4, y4 = (obb_points2[k][0], obb_points2[k][1], 
+                                        obb_points2[(k + 1) % obb_points2.shape[0]][0], 
+                                        obb_points2[(k + 1) % obb_points2.shape[0]][1])
+                        
+                        if lines_intersect(x1, y1, x2, y2, x3, y3, x4, y4) and (calculate_overlap_ratio(x1, y1, x2, y2, x3, y3, x4, y4) > (1.0 - visibility_threshold)):
+                            image = cv2.fillPoly(image, [obb_points], color=(0, 0, 0))
+                            image = cv2.fillPoly(image, [obb_points2], color=(0, 0, 0))
+                            filled_bboxes.add(tuple(map(tuple, obb_points)))
+                            filled_bboxes.add(tuple(map(tuple, obb_points2)))
 
-                    
-                    if intersect(x1, y1, x2, y2, x3, y3, x4, y4):
-                        overlapping.add(bb_ind)
-                        overlapping.add(len(bb_ann["xc"]))
+                            inst_is_occluded = True
 
-                        if view_annotations:
-                            img_obb = cv2.polylines(img_obb, [obb_points], isClosed=True, color=(0,0,255), thickness=3)
-                            img_obb = cv2.polylines(img_obb, [obb_points2], isClosed=True, color=(0,0,255), thickness=3)
-                            img_bb = cv2.rectangle(img_bb, (x_bb, y_bb), (x_bb+w, y_bb+h), color=(0,0,255), thickness=3)
-                            img_bb = cv2.rectangle(img_bb, (x_bb2, y_bb2), (x_bb2+w2, y_bb2+h2), color=(0,0,255), thickness=3)
-                        img = cv2.fillPoly(img, [obb_points], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
-                        img = cv2.fillPoly(img, [obb_points2], color=(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+        # Store bounding box data for both occluded and unoccluded cases
+        append_bbox_data(bbox_annotations_all_objs, category_id, x_bbox, bbox_width, bbox_height, obb_points, image_width)
 
-        if view_annotations and len(bb_ann["xc"]) not in overlapping: # if current instance isn't overlapping
-            img_bb = cv2.rectangle(img_bb, (x_bb, y_bb), (x_bb+w, y_bb+h), color=colors[cat_id], thickness=2)
-            img_obb = cv2.polylines(img_obb, [obb_points], isClosed=True, color=colors[cat_id], thickness=2)
+        inst_annotation = {
+            "id": annotation_id,
+            "image_id": image_id,
+            "category_id": category_id,
+            "bbox": [x_bbox, y_bbox, bbox_width, bbox_height],
+            "segmentation": binary_mask_to_rle((segmentation_map == instance_id).astype('uint8')),
+            "area": bbox_width * bbox_height,
+            "iscrowd": 0
+        }
 
-        bb_ann["cat_id"].append(cat_id) 
-        bb_ann["xc"].append((x_bb + w/2) / img_w)
-        bb_ann["yc"].append((y_bb + h/2) / img_h)
-        bb_ann["w"].append(w / img_w)
-        bb_ann["h"].append(h / img_h)
+        # Add annotations
+        annotation_all_objects.append(inst_annotation)
+        if not inst_is_occluded:
+            append_bbox_data(bbox_annotations_after_occlusion_removal, category_id, x_bbox, bbox_width, bbox_height, obb_points, image_width)
+            annotation_after_occlusion_removal.append(inst_annotation)
 
-        bb_ann["obb1x"].append(obb_points[0][0])
-        bb_ann["obb1y"].append(obb_points[0][1])
-        bb_ann["obb2x"].append(obb_points[1][0])
-        bb_ann["obb2y"].append(obb_points[1][1])
-        bb_ann["obb3x"].append(obb_points[2][0])
-        bb_ann["obb3y"].append(obb_points[2][1])
-        bb_ann["obb4x"].append(obb_points[3][0])
-        bb_ann["obb4y"].append(obb_points[3][1])
+        annotation_id += 1
 
-        ann_info = {
-                    "id": ann_id,
-                    "image_id":img_id,
-                    "category_id": cat_id,
-                    "bbox":[
-                        x_bb,
-                        y_bb,
-                        w,
-                        h
-                    ],
-                    "segmentation": binary_mask_to_rle((seg_map == inst).astype('uint8')),
-                    "area": w*h,
-                    "iscrowd": 0
-                    }
+    # Convert bounding box data to DataFrames for COCO annotation
+    df_all_objs = pd.DataFrame.from_dict(bbox_annotations_all_objs)
+    df_after_occlusion_removal = pd.DataFrame.from_dict(bbox_annotations_after_occlusion_removal)
 
-        ann_id += 1
-        img_ann_info.append(ann_info)
+    # Ensure each image has corresponding labels, even if empty
+    label_filename = image_filepath.with_suffix('.txt').name
+    for label_folder in paths["yolo_labels"].values():
+        label_path = label_folder / label_filename
+        with open(label_path, 'w') as file:
+            pass
 
+    # Save annotations for all objects and unoccluded objects only
+    np.savetxt(paths["yolo_labels"]["hbb_all_objs"] / (label_filename), df_all_objs[["category_id", "center_x", "center_y", "width", "height"]], delimiter=' ', fmt=['%d', '%.4f', '%.4f', '%.4f', '%.4f'])
+    np.savetxt(paths["yolo_labels"]["hbb_unoccluded_objects_only"] / (label_filename), df_after_occlusion_removal[["category_id", "center_x", "center_y", "width", "height"]], delimiter=' ', fmt=['%d', '%.4f', '%.4f', '%.4f', '%.4f'])
+    np.savetxt(paths["yolo_labels"]["obb_all_objs"] / (label_filename), df_all_objs[["category_id", "obb1_x", "obb1_y", "obb2_x", "obb2_y", "obb3_x", "obb3_y", "obb4_x", "obb4_y"]], delimiter=' ', fmt=['%d'] + ['%d'] * 8)
+    np.savetxt(paths["yolo_labels"]["obb_unoccluded_objects_only"] / (label_filename), df_after_occlusion_removal[["category_id", "obb1_x", "obb1_y", "obb2_x", "obb2_y", "obb3_x", "obb3_y", "obb4_x", "obb4_y"]], delimiter=' ', fmt=['%d'] + ['%d'] * 8)
 
-    df = pd.DataFrame.from_dict(bb_ann)
-    df = df.drop(list(overlapping))  # get rid of overlapping labels
-    img_ann_info = [i for j, i in enumerate(img_ann_info) if j not in overlapping]
-    yolo_col = ["cat_id", "xc", "yc", "w", "h"]
-    yolo_labels_file = yolo_labels_path / (img_path_obj.stem + ".txt")
-    np.savetxt(yolo_labels_file, df[yolo_col], delimiter=' ', fmt=['%d', '%.4f', '%.4f', '%.4f', '%.4f'])
+    # Update COCO annotations
+    coco_annotations_after_occlusion_removal = copy.deepcopy(coco_annotations)
+    coco_annotations["annotations"].extend(annotation_all_objects)
+    coco_annotations_after_occlusion_removal["annotations"].extend(annotation_after_occlusion_removal)
 
-    obb_col = ["cat_id", "obb1x", "obb1y", "obb2x", "obb2y", "obb3x", "obb3y", "obb4x", "obb4y"]
-    obb_labels_file = obb_labels_path / (img_path_obj.stem + ".txt")
-    np.savetxt(obb_labels_file, df[obb_col], delimiter=' ', fmt=['%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d'])
+    # Save modified image with only unoccluded objects
+    image_unoccluded_objects_only_filepath = paths["img_unoccluded_objects_only"] / image_filename
+    cv2.imwrite(str(image_unoccluded_objects_only_filepath), image)
 
-    coco_ann["annotations"].extend(img_ann_info)
+    # Create visualizations for the image
+    for key, output_vis_folder in paths["visualization"].items():
+        output_vis_filepath = output_vis_folder / image_filepath.name
+        label_filepath = Path(str(output_vis_folder).replace("visualization", "yolo_labels")) / label_filename
+        if "unoccluded_objects_only" in key:
+            annotate_yolo_labels(label_filepath, image_unoccluded_objects_only_filepath, output_vis_filepath)
+        else:
+            annotate_yolo_labels(label_filepath, image_filepath, output_vis_filepath)
 
-    img_file = img_path / img_filename
-    cv2.imwrite(str(img_file), img)  # overwrite overlapping regions in image
+    # Print progress for every 50 images processed
+    if image_id % 50 == 0:
+        print(f"=== Processed {image_id} images")
 
-    if view_annotations:
-        cv2.imwrite(str(yolo_annotated_path / img_filename), img_bb)
-        cv2.imwrite(str(obb_annotated_path / img_filename), img_obb)
-    
-    if img_id % 50 == 0:
-        print(f"=== Processed {img_id} images")
+# Save COCO-style annotations to JSON files
+with open(str(Path(results_directory) / "coco_annotations.json"), "w") as f:
+    json.dump(coco_annotations, f)
 
-coco_annotations_file = Path(results_dir) / "coco_annotations.json"
+with open(str(Path(results_directory) / "coco_annotations_after_occlusion_removal.json"), "w") as f:
+    json.dump(coco_annotations_after_occlusion_removal, f)
 
-with open(str(coco_annotations_file), "w") as f:
-    json.dump(coco_ann, f)
-
+# Calculate and display the total processing time
 end_time = time.time()
 total_time = end_time - start_time
 hours, remainder = divmod(total_time, 3600)
